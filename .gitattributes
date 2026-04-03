@@ -1,0 +1,5 @@
+# 确保中文文件名正确处理
+* text=auto
+
+# Markdown 文件使用 UTF-8 编码
+*.md text eol=lf encoding=utf-8

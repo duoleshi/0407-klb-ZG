@@ -1,0 +1,202 @@
+// ./lib/pdf-parser.ts
+
+/**
+ * 解析 PDF 文件内容
+ * 1. 先尝试文本提取（pdf-parse）
+ * 2. 如果失败或内容太少，尝试 OCR 识别（可选，需要原生依赖）
+ */
+
+import pdfParse from "pdf-parse"
+
+// 空页阈值：少于这个字符数的页面视为空页/扫描页
+const EMPTY_PAGE_THRESHOLD = 50
+
+// OCR 触发阈值：如果文本提取少于这个字符数，启用 OCR
+const OCR_THRESHOLD = 100
+
+/**
+ * 使用 pdf-parse 尝试文本提取
+ */
+async function extractTextWithPdfParse(buffer: Buffer): Promise<{
+  text: string
+  numpages: number
+  pageDetails: { pageNum: number; charCount: number }[]
+}> {
+  const pageDetails: { pageNum: number; charCount: number }[] = []
+  let currentPageNum = 0
+
+  const renderPage = (pageData: any) => {
+    currentPageNum++
+    return pageData.getTextContent().then((textContent: any) => {
+      const items = textContent.items || []
+      const pageText = items
+        .map((item: any) => item.str || "")
+        .join(" ")
+        .trim()
+
+      pageDetails.push({
+        pageNum: currentPageNum,
+        charCount: pageText.length,
+      })
+
+      return ""
+    })
+  }
+
+  const data = await pdfParse(buffer, { pagerender: renderPage })
+
+  // 重新提取完整文本
+  const fullData = await pdfParse(buffer)
+  const text = fullData.text.trim()
+
+  return { text, numpages: data.numpages, pageDetails }
+}
+
+/**
+ * 使用 OCR 识别 PDF（将每页转为图片后识别）
+ * 注意：此功能需要原生依赖，如果加载失败则跳过
+ */
+async function recognizeWithOCR(buffer: Buffer, totalPages: number): Promise<string> {
+  console.log(`[OCR] 开始 OCR 识别，共 ${totalPages} 页...`)
+
+  try {
+    // 动态导入 OCR 相关模块，避免启动时报错
+    const pdf2img = await import("pdf-img-convert")
+    const Tesseract = await import("tesseract.js")
+
+    console.log(`[OCR] 正在将 PDF 转换为图片...`)
+    console.log(`[OCR] 首次运行会下载中文语言包，请耐心等待...`)
+
+    const pageTexts: string[] = []
+
+    // 将 PDF 转换为图片数组
+    const images = await pdf2img.default.convert(buffer, {
+      width: 2000,      // 宽度
+      height: 2000,     // 高度
+      base64: false,    // 返回 Buffer
+    })
+
+    console.log(`[OCR] PDF 转换完成，共 ${images.length} 页图片`)
+
+    // 初始化 Tesseract worker
+    const worker = await Tesseract.createWorker("chi_sim+eng", 1, {
+      logger: (m) => {
+        if (m.status === "loading language traineddata") {
+          console.log(`[OCR] 正在下载中文语言包...`)
+        }
+      },
+    })
+
+    // 逐页识别
+    for (let i = 0; i < images.length; i++) {
+      const pageNum = i + 1
+      console.log(`[OCR] 正在识别第 ${pageNum}/${images.length} 页...`)
+
+      try {
+        const imageBuffer = images[i]
+        const result = await worker.recognize(imageBuffer)
+        const pageText = result.data.text.trim()
+
+        if (pageText.length >= EMPTY_PAGE_THRESHOLD) {
+          pageTexts.push(pageText)
+          console.log(`[OCR] 第 ${pageNum} 页: ${pageText.length} 字符`)
+        } else {
+          console.log(`[OCR] 第 ${pageNum} 页: ${pageText.length} 字符 (内容过少，跳过)`)
+        }
+      } catch (pageError) {
+        console.warn(`[OCR] 第 ${pageNum} 页识别失败:`, pageError)
+      }
+    }
+
+    // 关闭 worker
+    await worker.terminate()
+
+    const totalChars = pageTexts.reduce((sum, text) => sum + text.length, 0)
+    console.log(`[OCR] 识别完成: 共 ${images.length} 页，有效内容 ${totalChars} 字符`)
+
+    return pageTexts.join("\n\n")
+  } catch (error) {
+    // OCR 模块加载失败，返回空字符串
+    console.warn(`[OCR] OCR 功能不可用: ${error instanceof Error ? error.message : error}`)
+    console.warn(`[OCR] 提示: OCR 功能需要安装 canvas 原生依赖`)
+    return ""
+  }
+}
+
+/**
+ * 解析 PDF 文件
+ */
+export async function parsePDF(buffer: Buffer): Promise<string> {
+  try {
+    console.log(`开始解析 PDF, buffer 大小: ${buffer.length} bytes`)
+
+    // 第一步：尝试文本提取
+    let text = ""
+    let numpages = 0
+    let pageDetails: { pageNum: number; charCount: number }[] = []
+
+    try {
+      const result = await extractTextWithPdfParse(buffer)
+      text = result.text
+      numpages = result.numpages
+      pageDetails = result.pageDetails
+      console.log(`[文本提取] 完成: ${text.length} 字符, ${numpages} 页`)
+
+      // 输出每页详情
+      const emptyPages = pageDetails.filter((p) => p.charCount < EMPTY_PAGE_THRESHOLD)
+      const validPages = pageDetails.filter((p) => p.charCount >= EMPTY_PAGE_THRESHOLD)
+      console.log(`[文本提取] 有效页面: ${validPages.length} 页, 空页/扫描页: ${emptyPages.length} 页`)
+    } catch (e) {
+      console.warn(`[文本提取] 失败: ${e instanceof Error ? e.message : e}`)
+    }
+
+    // 第二步：如果文本提取太少，启用 OCR（可选）
+    if (text.length < OCR_THRESHOLD) {
+      console.log(`[文本提取] 内容过少 (${text.length} 字符)，尝试 OCR 识别...`)
+
+      try {
+        const ocrText = await recognizeWithOCR(buffer, numpages || 1)
+        if (ocrText.length > text.length) {
+          text = ocrText
+        }
+      } catch (ocrError) {
+        console.warn(`[OCR] 识别失败，使用已提取的文本`)
+      }
+    }
+
+    console.log(`PDF 最终解析结果: ${text.length} 字符`)
+
+    if (text.length === 0) {
+      console.warn("警告: PDF 解析后文本为空")
+    }
+
+    return text
+  } catch (error) {
+    console.error("PDF 解析详细错误:", error)
+    throw new Error(`PDF 文件解析失败: ${error instanceof Error ? error.message : "未知错误"}`)
+  }
+}
+
+/**
+ * 解析上传的文件（支持 PDF、TXT、MD）
+ */
+export async function parseUploadedFile(
+  buffer: Buffer,
+  filename: string
+): Promise<string> {
+  const ext = filename.toLowerCase().split(".").pop()
+
+  switch (ext) {
+    case "pdf":
+      return parsePDF(buffer)
+
+    case "txt":
+      return buffer.toString("utf-8")
+
+    case "md":
+      return buffer.toString("utf-8")
+
+    default:
+      throw new Error(`不支持的文件格式: .${ext}`)
+  }
+}

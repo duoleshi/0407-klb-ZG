@@ -1,0 +1,9 @@
+onlyBuiltDependencies:
+  - a
+  - canvas
+  - h
+  - p
+  - r
+  - s
+  - sharp
+  - tesseract.js
