@@ -56,6 +56,8 @@ export async function getDatabase(forceReload: boolean = false): Promise<Databas
     const buffer = fs.readFileSync(DB_PATH)
     dbInstance = new SQL.Database(buffer)
     console.log(`数据库从磁盘加载成功，文件大小: ${buffer.length} bytes`)
+    // 数据库迁移：为旧表添加缺失的列
+    migrateDatabase(dbInstance)
   } else {
     dbInstance = new SQL.Database()
     // 创建表结构
@@ -93,6 +95,7 @@ function createTables(db: Database): void {
       review_conclusion TEXT,
       knowledge_file TEXT,
       tokens_used INTEGER,
+      model TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `)
@@ -102,6 +105,25 @@ function createTables(db: Database): void {
   db.run(`CREATE INDEX IF NOT EXISTS idx_profession_types ON review_records(profession_types)`)
 
   console.log("数据库表创建成功")
+}
+
+/**
+ * 数据库迁移：为旧表添加缺失的列
+ */
+function migrateDatabase(db: Database): void {
+  try {
+    const columns = db.exec("PRAGMA table_info(review_records)")
+    const columnNames = columns[0]?.values.map((row) => row[1] as string) || []
+
+    if (!columnNames.includes("model")) {
+      db.run("ALTER TABLE review_records ADD COLUMN model TEXT")
+      console.log("数据库迁移: 添加 model 列")
+    }
+
+    saveDatabase()
+  } catch (e) {
+    console.error("数据库迁移失败:", e)
+  }
 }
 
 /**
@@ -127,6 +149,7 @@ export interface ReviewRecord {
   review_conclusion: string | null
   knowledge_file: string | null
   tokens_used: number | null
+  model: string | null
   created_at: string
 }
 
@@ -140,6 +163,7 @@ export interface CreateReviewInput {
   review_conclusion?: string
   knowledge_file?: string
   tokens_used?: number
+  model?: string
 }
 
 /**
@@ -153,8 +177,8 @@ export async function saveReviewRecord(input: CreateReviewInput): Promise<number
 
   db.run(
     `INSERT INTO review_records
-     (filename, file_size, profession_types, document_content, review_result, review_conclusion, knowledge_file, tokens_used, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))`,
+     (filename, file_size, profession_types, document_content, review_result, review_conclusion, knowledge_file, tokens_used, model, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))`,
     [
       input.filename,
       input.file_size || null,
@@ -164,6 +188,7 @@ export async function saveReviewRecord(input: CreateReviewInput): Promise<number
       input.review_conclusion || null,
       input.knowledge_file || null,
       input.tokens_used || null,
+      input.model || null,
     ]
   )
 
@@ -211,7 +236,7 @@ export async function getReviewRecords(
   // 获取记录
   const recordsResult = db.exec(
     `SELECT id, filename, file_size, profession_types, document_content, review_result,
-            review_conclusion, knowledge_file, tokens_used, created_at
+            review_conclusion, knowledge_file, tokens_used, model, created_at
      FROM review_records
      WHERE ${whereClause}
      ORDER BY created_at DESC
@@ -232,7 +257,8 @@ export async function getReviewRecords(
         review_conclusion: row[6] as string | null,
         knowledge_file: row[7] as string | null,
         tokens_used: row[8] as number | null,
-        created_at: row[9] as string,
+        model: row[9] as string | null,
+        created_at: row[10] as string,
       })
     }
   }
@@ -248,7 +274,7 @@ export async function getReviewRecordById(id: number): Promise<ReviewRecord | nu
 
   const result = db.exec(
     `SELECT id, filename, file_size, profession_types, document_content, review_result,
-            review_conclusion, knowledge_file, tokens_used, created_at
+            review_conclusion, knowledge_file, tokens_used, model, created_at
      FROM review_records
      WHERE id = ?`,
     [id]
@@ -269,7 +295,8 @@ export async function getReviewRecordById(id: number): Promise<ReviewRecord | nu
     review_conclusion: row[6] as string | null,
     knowledge_file: row[7] as string | null,
     tokens_used: row[8] as number | null,
-    created_at: row[9] as string,
+    model: row[9] as string | null,
+    created_at: row[10] as string,
   }
 }
 

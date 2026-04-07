@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, use } from "react"
+import { useState, useEffect, useCallback, use } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import {
@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { ReviewResult } from "@/components/review-result"
 import { Header, Footer } from "@/components/landing"
+import { marked } from "marked"
 
 interface ReviewRecord {
   id: number
@@ -39,6 +40,7 @@ interface ReviewRecord {
   review_conclusion: string | null
   knowledge_file: string | null
   tokens_used: number | null
+  model: string | null
   created_at: string
 }
 
@@ -63,6 +65,14 @@ const formatDate = (dateStr: string) => {
   })
 }
 
+// 格式化模型名称
+const formatModelName = (model: string | null) => {
+  if (!model) return "-"
+  if (model.includes("deepseek")) return "DeepSeek"
+  if (model.includes("qwen")) return "通义千问"
+  return model
+}
+
 // 格式化文件大小
 const formatFileSize = (bytes: number | null) => {
   if (!bytes) return "-"
@@ -76,7 +86,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   const router = useRouter()
   const [record, setRecord] = useState<ReviewRecord | null>(null)
   const [loading, setLoading] = useState(true)
-  const [exporting, setExporting] = useState(false)
+  const [exporting, setExporting] = useState<string | null>(null)
 
   // 获取记录详情
   useEffect(() => {
@@ -127,6 +137,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
 
 文件名：${record.filename}
 专业类型：${record.profession_types ? JSON.parse(record.profession_types).join("、") : "通用工程"}
+审核模型：${formatModelName(record.model)}
 审核结论：${record.review_conclusion || "待确认"}
 审核时间：${formatDate(record.created_at)}
 知识库文件：${record.knowledge_file || "-"}
@@ -159,6 +170,7 @@ ${record.review_result}
 |------|------|
 | 文件名 | ${record.filename} |
 | 专业类型 | ${record.profession_types ? JSON.parse(record.profession_types).join("、") : "通用工程"} |
+| 审核模型 | ${formatModelName(record.model)} |
 | 审核结论 | ${record.review_conclusion || "待确认"} |
 | 审核时间 | ${formatDate(record.created_at)} |
 | 知识库文件 | ${record.knowledge_file || "-"} |
@@ -251,6 +263,7 @@ ${record.review_result}
   <table class="meta-table">
     <tr><td>文件名</td><td>${record.filename}</td></tr>
     <tr><td>专业类型</td><td>${record.profession_types ? JSON.parse(record.profession_types).join("、") : "通用工程"}</td></tr>
+    <tr><td>审核模型</td><td>${formatModelName(record.model)}</td></tr>
     <tr><td>审核结论</td><td><span class="conclusion ${record.review_conclusion === '合规' ? 'compliant' : record.review_conclusion === '部分合规' ? 'partial' : 'non-compliant'}">${record.review_conclusion || "待确认"}</span></td></tr>
     <tr><td>审核时间</td><td>${formatDate(record.created_at)}</td></tr>
     <tr><td>知识库文件</td><td>${record.knowledge_file || "-"}</td></tr>
@@ -277,6 +290,127 @@ ${record.review_result}
     a.click()
     URL.revokeObjectURL(url)
   }
+
+  // 构建报告 HTML（用于 PDF 和 DOC 导出）
+  const buildReportHTML = useCallback(async () => {
+    if (!record) return ""
+    const professionTypes = record.profession_types
+      ? JSON.parse(record.profession_types).join("、")
+      : "通用工程"
+    const conclusionClass =
+      record.review_conclusion === "合规" ? "compliant" :
+      record.review_conclusion === "部分合规" ? "partial" : "non-compliant"
+
+    // 将 Markdown 转为 HTML
+    const reportHtml = await marked(record.review_result)
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: "Microsoft YaHei", "SimSun", sans-serif; max-width: 800px; margin: 0 auto; padding: 40px 20px; line-height: 1.8; color: #333; }
+    h1 { text-align: center; color: #1a56db; border-bottom: 2px solid #1a56db; padding-bottom: 10px; }
+    h2 { color: #1e40af; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; margin-top: 30px; }
+    h3 { color: #374151; margin-top: 20px; }
+    .meta-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+    .meta-table td { padding: 10px; border: 1px solid #ddd; }
+    .meta-table td:first-child { width: 120px; background: #f5f5f5; font-weight: bold; }
+    .conclusion { display: inline-block; padding: 5px 15px; border-radius: 4px; font-weight: bold; }
+    .conclusion.compliant { background: #d1fae5; color: #059669; }
+    .conclusion.partial { background: #fef3c7; color: #d97706; }
+    .conclusion.non-compliant { background: #fee2e2; color: #dc2626; }
+    strong { font-weight: bold; }
+    hr { margin: 30px 0; border: none; border-top: 1px solid #ddd; }
+    table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: #f3f4f6; }
+    ul, ol { padding-left: 20px; }
+    li { margin: 4px 0; }
+    p { margin: 8px 0; }
+  </style>
+</head>
+<body>
+  <h1>工程方案智能审核报告</h1>
+  <table class="meta-table">
+    <tr><td>文件名</td><td>${record.filename}</td></tr>
+    <tr><td>专业类型</td><td>${professionTypes}</td></tr>
+    <tr><td>审核模型</td><td>${formatModelName(record.model)}</td></tr>
+    <tr><td>审核结论</td><td><span class="conclusion ${conclusionClass}">${record.review_conclusion || "待确认"}</span></td></tr>
+    <tr><td>审核时间</td><td>${formatDate(record.created_at)}</td></tr>
+    <tr><td>知识库文件</td><td>${record.knowledge_file || "-"}</td></tr>
+  </table>
+  <hr>
+  ${reportHtml}
+  <hr>
+  <p style="text-align: center; color: #999; font-size: 12px;">本报告由 AI 智能审核系统生成，仅供参考</p>
+</body>
+</html>`
+  }, [record])
+
+  // 导出为 PDF（通过浏览器打印，智能分页，不截断文字）
+  const exportAsPDF = useCallback(async () => {
+    if (!record) return
+    setExporting("pdf")
+    try {
+      const html = await buildReportHTML()
+      const printWindow = window.open("", "_blank")
+      if (!printWindow) {
+        alert("请允许弹出窗口以导出 PDF")
+        return
+      }
+      printWindow.document.write(html)
+      printWindow.document.close()
+      // 等待内容渲染完成后触发打印
+      printWindow.onload = () => {
+        setTimeout(() => {
+          printWindow.print()
+          setExporting(null)
+        }, 300)
+      }
+    } catch (error) {
+      console.error("PDF 导出失败:", error)
+      setExporting(null)
+    }
+  }, [record, buildReportHTML])
+
+  // 导出为 DOC（Word 可直接打开的 HTML 格式）
+  const exportAsDOC = useCallback(async () => {
+    if (!record) return
+    setExporting("doc")
+    try {
+      const bodyContent = await buildReportHTML()
+      // 提取 <body> 内的内容
+      const bodyMatch = bodyContent.match(/<body[^>]*>([\s\S]*)<\/body>/i)
+      const styleMatch = bodyContent.match(/<style[^>]*>([\s\S]*)<\/style>/i)
+      const htmlBody = bodyMatch ? bodyMatch[1] : bodyContent
+      const htmlStyle = styleMatch ? styleMatch[1] : ""
+
+      const wordHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+  <meta charset="utf-8">
+  <style>
+    ${htmlStyle}
+  </style>
+</head>
+<body>
+  ${htmlBody}
+</body>
+</html>`
+
+      const blob = new Blob(["\ufeff" + wordHtml], { type: "application/msword" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `审核报告_${record.filename.replace(/\.[^/.]+$/, "")}.doc`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error("DOC 导出失败:", error)
+    } finally {
+      setExporting(null)
+    }
+  }, [record, buildReportHTML])
 
   if (loading) {
     return (
@@ -351,6 +485,10 @@ ${record.review_result}
                 </span>
               </div>
               <div className="flex items-start gap-3">
+                <span className="text-sm text-muted-foreground w-20 shrink-0">审核模型</span>
+                <span>{formatModelName(record.model)}</span>
+              </div>
+              <div className="flex items-start gap-3">
                 <span className="text-sm text-muted-foreground w-20 shrink-0">审核结论</span>
                 <span className={`inline-block rounded px-3 py-1 text-sm font-medium ${getConclusionColor(record.review_conclusion)}`}>
                   {record.review_conclusion || "待确认"}
@@ -373,17 +511,33 @@ ${record.review_result}
         {/* 操作按钮 */}
         <div className="mb-6 flex flex-wrap gap-3">
           <div className="flex gap-2">
+            <Button variant="outline" onClick={exportAsPDF} disabled={exporting === "pdf"}>
+              {exporting === "pdf" ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-2 h-4 w-4" />
+              )}
+              导出 PDF
+            </Button>
+            <Button variant="outline" onClick={exportAsDOC} disabled={exporting === "doc"}>
+              {exporting === "doc" ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FileDown className="mr-2 h-4 w-4" />
+              )}
+              导出 DOC
+            </Button>
             <Button variant="outline" onClick={exportAsText}>
               <Download className="mr-2 h-4 w-4" />
-              导出 TXT
+              TXT
             </Button>
             <Button variant="outline" onClick={exportAsMarkdown}>
               <FileDown className="mr-2 h-4 w-4" />
-              导出 MD
+              MD
             </Button>
             <Button variant="outline" onClick={exportAsHTML}>
               <FileDown className="mr-2 h-4 w-4" />
-              导出 HTML
+              HTML
             </Button>
           </div>
           <AlertDialog>

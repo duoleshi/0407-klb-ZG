@@ -17,10 +17,30 @@ import {
 } from "@/lib/db"
 
 // 初始化 DeepSeek 客户端
-const openai = new OpenAI({
+const deepseekClient = new OpenAI({
   baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
   apiKey: process.env.DEEPSEEK_API_KEY,
 })
+
+// 初始化千问百炼客户端
+const qwenClient = new OpenAI({
+  baseURL: process.env.QWEN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  apiKey: process.env.QWEN_API_KEY,
+})
+
+// 根据模型选择获取对应的客户端和模型名
+function getModelConfig(model: string) {
+  if (model === "qwen") {
+    return {
+      client: qwenClient,
+      modelName: process.env.QWEN_MODEL || "qwen-plus",
+    }
+  }
+  return {
+    client: deepseekClient,
+    modelName: "deepseek-chat",
+  }
+}
 
 // SSE 进度事件类型
 interface ProgressEvent {
@@ -247,12 +267,16 @@ export async function POST(request: NextRequest) {
         // 解析表单数据
         const formData = await request.formData()
         const file = formData.get("file") as File | null
+        const modelParam = (formData.get("model") as string) || "deepseek"
 
         if (!file) {
           sendError("请上传文件")
           close()
           return
         }
+
+        const { client, modelName } = getModelConfig(modelParam)
+        console.log(`使用模型: ${modelParam} (${modelName})`)
 
         console.log(`开始审核: ${file.name}, 文件大小: ${file.size} bytes`)
 
@@ -294,7 +318,7 @@ export async function POST(request: NextRequest) {
 
         if (chunkCheck.needsChunking) {
           // 分块审核流程
-          await handleChunkedReviewSSE(file, documentContent, sendProgress, sendResult, sendError, close)
+          await handleChunkedReviewSSE(file, documentContent, client, modelName, sendProgress, sendResult, sendError, close)
           return
         }
 
@@ -335,10 +359,10 @@ export async function POST(request: NextRequest) {
           truncatedDoc
         )
 
-        // 6. 调用 DeepSeek API
-        console.log("步骤 4: 调用 DeepSeek API...")
-        const completion = await openai.chat.completions.create({
-          model: "deepseek-chat",
+        // 6. 调用 AI API
+        console.log("步骤 4: 调用 AI API...")
+        const completion = await client.chat.completions.create({
+          model: modelName,
           messages: [
             {
               role: "system",
@@ -376,6 +400,7 @@ export async function POST(request: NextRequest) {
             review_conclusion: reviewConclusion,
             knowledge_file: `共加载 ${loadedFiles.length} 个规范文件`,
             tokens_used: completion.usage?.total_tokens,
+            model: modelName,
           })
         } catch (dbError) {
           console.error("保存审核记录失败:", dbError)
@@ -625,8 +650,9 @@ async function handleChunkedReview(
         .replace("{documentContent}", chunk.content)
 
       // 3.3 调用 API
-      const completion = await openai.chat.completions.create({
-        model: "deepseek-chat",
+      const { client: chunkClient, modelName: chunkModelName } = getModelConfig("deepseek")
+      const completion = await chunkClient.chat.completions.create({
+        model: chunkModelName,
         messages: [
           {
             role: "system",
@@ -658,8 +684,8 @@ async function handleChunkedReview(
       chunkReports.join("\n\n---\n\n")
     )
 
-    const mergeCompletion = await openai.chat.completions.create({
-      model: "deepseek-chat",
+    const mergeCompletion = await client.chat.completions.create({
+      model: modelName,
       messages: [
         {
           role: "system",
@@ -726,6 +752,8 @@ async function handleChunkedReview(
 async function handleChunkedReviewSSE(
   file: File,
   documentContent: string,
+  client: OpenAI,
+  modelName: string,
   sendProgress: (event: ProgressEvent) => void,
   sendResult: (data: any) => void,
   sendError: (error: string) => void,
@@ -790,18 +818,22 @@ async function handleChunkedReviewSSE(
         .replace("{documentContent}", chunk.content)
 
       // 调用 API
-      const completion = await openai.chat.completions.create({
-        model: "deepseek-chat",
+      const completion = await client.chat.completions.create({
+        model: modelName,
         messages: [
           {
             role: "system",
-            content: "你是一位专业的施工方案审核专家，请对文档片段进行审核。",
+            content: `你是一位专业的施工方案审核专家。你的任务是：
+1. 严格按照提供的知识库内容进行审核
+2. 使用表格化格式输出审核报告
+3. 每个问题都要给出具体依据和整改建议
+4. 对于缺失内容要明确标注
+5. 保持专业、客观的审核风格`,
           },
           { role: "user", content: prompt },
         ],
         stream: false,
         temperature: 0.2,
-        max_tokens: 4000,
       })
 
       const chunkResult = completion.choices[0]?.message?.content || ""
@@ -825,8 +857,8 @@ async function handleChunkedReviewSSE(
       chunkReports.join("\n\n---\n\n")
     )
 
-    const mergeCompletion = await openai.chat.completions.create({
-      model: "deepseek-chat",
+    const mergeCompletion = await client.chat.completions.create({
+      model: modelName,
       messages: [
         {
           role: "system",
@@ -858,6 +890,7 @@ async function handleChunkedReviewSSE(
         review_conclusion: reviewConclusion,
         knowledge_file: `分块审核 ${chunks.length} 个块`,
         tokens_used: totalTokens,
+        model: modelName,
       })
       console.log("审核记录已保存")
     } catch (dbError) {

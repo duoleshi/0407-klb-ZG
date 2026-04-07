@@ -8,6 +8,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { FileUpload } from "@/components/file-upload"
 import { ReviewResult } from "@/components/review-result"
 import { Progress } from "@/components/ui/progress"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 type ReviewStatus = "idle" | "reviewing" | "success" | "error"
 
@@ -77,6 +78,7 @@ function ProgressDisplay({
 
 export function Hero() {
   const [file, setFile] = useState<File | null>(null)
+  const [selectedModel, setSelectedModel] = useState<string>("deepseek")
   const [status, setStatus] = useState<ReviewStatus>("idle")
   const [result, setResult] = useState<string>("")
   const [error, setError] = useState<string>("")
@@ -95,6 +97,7 @@ export function Hero() {
     try {
       const formData = new FormData()
       formData.append("file", file)
+      formData.append("model", selectedModel)
 
       // 使用 fetch + ReadableStream 接收 SSE
       const response = await fetch("/api/review", {
@@ -208,6 +211,22 @@ export function Hero() {
                 上传方案文件
               </label>
               <FileUpload file={file} onFileChange={setFile} />
+            </div>
+
+            {/* Model Select */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">
+                选择模型
+              </label>
+              <Select value={selectedModel} onValueChange={setSelectedModel}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="选择审核模型" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="deepseek">DeepSeek</SelectItem>
+                  <SelectItem value="qwen">千问百炼</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Submit Button */}

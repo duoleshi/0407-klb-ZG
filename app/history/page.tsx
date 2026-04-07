@@ -35,6 +35,7 @@ interface ReviewRecord {
   review_conclusion: string | null
   knowledge_file: string | null
   tokens_used: number | null
+  model: string | null
   created_at: string
 }
 
@@ -82,6 +83,14 @@ const formatDate = (dateStr: string) => {
     hour: "2-digit",
     minute: "2-digit",
   })
+}
+
+// 格式化模型名称
+const formatModelName = (model: string | null) => {
+  if (!model) return "-"
+  if (model.includes("deepseek")) return "DeepSeek"
+  if (model.includes("qwen")) return "通义千问"
+  return model
 }
 
 // 格式化文件大小
@@ -255,6 +264,7 @@ export default function HistoryPage() {
                         <th className="pb-3 font-medium">序号</th>
                         <th className="pb-3 font-medium">文件名</th>
                         <th className="pb-3 font-medium">专业类型</th>
+                        <th className="pb-3 font-medium">审核模型</th>
                         <th className="pb-3 font-medium">审核结论</th>
                         <th className="pb-3 font-medium">审核时间</th>
                         <th className="pb-3 font-medium text-right">操作</th>
@@ -269,16 +279,19 @@ export default function HistoryPage() {
                           <td className="py-4 text-sm">
                             {(pagination.page - 1) * pagination.pageSize + index + 1}
                           </td>
-                          <td className="py-4">
-                            <div className="font-medium">{record.filename}</div>
+                          <td className="py-4 max-w-[220px]">
+                            <div className="font-medium break-all">{record.filename}</div>
                             <div className="text-xs text-muted-foreground">
                               {formatFileSize(record.file_size)}
                             </div>
                           </td>
-                          <td className="py-4 text-sm">
+                          <td className="py-4 text-sm max-w-[220px] break-all">
                             {record.profession_types
                               ? JSON.parse(record.profession_types).join("、")
                               : "通用工程"}
+                          </td>
+                          <td className="py-4 text-sm min-w-[80px]">
+                            {formatModelName(record.model)}
                           </td>
                           <td className="py-4">
                             <span className={`font-medium ${getConclusionColor(record.review_conclusion)}`}>
