@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getReviewRecordById } from "@/lib/db"
+import { getCurrentUserId } from "@/lib/supabase/server"
 
 // 处理 CORS
 export async function OPTIONS() {
@@ -19,6 +20,11 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const userId = await getCurrentUserId()
+    if (!userId) {
+      return NextResponse.json({ error: "请先登录" }, { status: 401 })
+    }
+
     const { id } = await params
     const recordId = parseInt(id, 10)
 
@@ -29,7 +35,7 @@ export async function GET(
       )
     }
 
-    const record = await getReviewRecordById(recordId)
+    const record = await getReviewRecordById(recordId, userId)
 
     if (!record) {
       return NextResponse.json(

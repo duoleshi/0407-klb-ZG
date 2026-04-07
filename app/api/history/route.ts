@@ -3,6 +3,7 @@ import {
   getReviewRecords,
   deleteReviewRecord,
 } from "@/lib/db"
+import { getCurrentUserId } from "@/lib/supabase/server"
 
 // 处理 CORS
 export async function OPTIONS() {
@@ -19,6 +20,11 @@ export async function OPTIONS() {
 // GET - 获取历史记录列表
 export async function GET(request: NextRequest) {
   try {
+    const userId = await getCurrentUserId()
+    if (!userId) {
+      return NextResponse.json({ error: "请先登录" }, { status: 401 })
+    }
+
     const { searchParams } = new URL(request.url)
 
     const page = parseInt(searchParams.get("page") || "1", 10)
@@ -26,7 +32,7 @@ export async function GET(request: NextRequest) {
     const professionType = searchParams.get("professionType") || undefined
     const keyword = searchParams.get("keyword") || undefined
 
-    const { records, total } = await getReviewRecords(page, pageSize, {
+    const { records, total } = await getReviewRecords(userId, page, pageSize, {
       professionType,
       keyword,
     })
@@ -58,6 +64,11 @@ export async function GET(request: NextRequest) {
 // DELETE - 删除历史记录
 export async function DELETE(request: NextRequest) {
   try {
+    const userId = await getCurrentUserId()
+    if (!userId) {
+      return NextResponse.json({ error: "请先登录" }, { status: 401 })
+    }
+
     const { searchParams } = new URL(request.url)
     const id = parseInt(searchParams.get("id") || "0", 10)
 
@@ -68,7 +79,7 @@ export async function DELETE(request: NextRequest) {
       )
     }
 
-    await deleteReviewRecord(id)
+    await deleteReviewRecord(id, userId)
 
     return NextResponse.json({
       success: true,

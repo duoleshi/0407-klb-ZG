@@ -41,6 +41,7 @@ interface ReviewRecord {
   knowledge_file: string | null
   tokens_used: number | null
   model: string | null
+  user_id: string | null
   created_at: string
 }
 

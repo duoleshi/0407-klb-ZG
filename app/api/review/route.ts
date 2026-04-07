@@ -15,6 +15,7 @@ import {
   saveReviewRecord,
   extractConclusion,
 } from "@/lib/db"
+import { getCurrentUserId } from "@/lib/supabase/server"
 
 // 初始化 DeepSeek 客户端
 const deepseekClient = new OpenAI({
@@ -219,6 +220,12 @@ export async function OPTIONS() {
 }
 
 export async function POST(request: NextRequest) {
+  // 获取当前用户
+  const userId = await getCurrentUserId()
+  if (!userId) {
+    return NextResponse.json({ error: "请先登录" }, { status: 401 })
+  }
+
   console.log("=== 开始审核请求 ===")
   console.log("环境检查:", {
     nodeEnv: process.env.NODE_ENV,
@@ -402,6 +409,7 @@ export async function POST(request: NextRequest) {
             knowledge_file: `共加载 ${loadedFiles.length} 个规范文件`,
             tokens_used: completion.usage?.total_tokens,
             model: modelName,
+            userId,
           })
         } catch (dbError) {
           console.error("保存审核记录失败:", dbError)
@@ -719,6 +727,7 @@ async function handleChunkedReview(
         review_conclusion: reviewConclusion,
         knowledge_file: `分块审核 ${chunks.length} 个块`,
         tokens_used: totalTokens,
+        userId,
       })
       console.log("审核记录已保存")
     } catch (dbError) {
@@ -893,6 +902,7 @@ async function handleChunkedReviewSSE(
         knowledge_file: `分块审核 ${chunks.length} 个块`,
         tokens_used: totalTokens,
         model: modelName,
+        userId,
       })
       console.log("审核记录已保存")
     } catch (dbError) {
