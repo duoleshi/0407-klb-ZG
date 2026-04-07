@@ -1,142 +1,9 @@
-import initSqlJs, { Database, SqlJsStatic } from "sql.js"
-import fs from "fs"
-import path from "path"
+import { createClient } from "@supabase/supabase-js"
 
-// 数据库文件路径
-const DB_PATH = path.join(process.cwd(), "data", "review.db")
-
-// 数据库实例缓存
-let dbInstance: Database | null = null
-let SQL: SqlJsStatic | null = null
-
-/**
- * 初始化 SQL.js
- */
-async function initSqlJsEngine(): Promise<SqlJsStatic> {
-  if (SQL) return SQL
-
-  // 在服务端加载 WASM 文件
-  const wasmBinary = fs.readFileSync(
-    path.join(process.cwd(), "public", "wasm", "sql-wasm.wasm")
-  )
-
-  SQL = await initSqlJs({
-    wasmBinary,
-  })
-  return SQL
-}
-
-/**
- * 获取数据库实例
- * @param forceReload 是否强制从磁盘重新加载
- */
-export async function getDatabase(forceReload: boolean = false): Promise<Database> {
-  // 如果强制重新加载，先清空缓存
-  if (forceReload && dbInstance) {
-    try {
-      dbInstance.close()
-    } catch (e) {
-      // 忽略关闭错误
-    }
-    dbInstance = null
-  }
-
-  if (dbInstance) return dbInstance
-
-  const SQL = await initSqlJsEngine()
-
-  // 确保数据目录存在
-  const dataDir = path.dirname(DB_PATH)
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true })
-  }
-
-  // 尝试加载现有数据库
-  if (fs.existsSync(DB_PATH)) {
-    const buffer = fs.readFileSync(DB_PATH)
-    dbInstance = new SQL.Database(buffer)
-    console.log(`数据库从磁盘加载成功，文件大小: ${buffer.length} bytes`)
-    // 数据库迁移：为旧表添加缺失的列
-    migrateDatabase(dbInstance)
-  } else {
-    dbInstance = new SQL.Database()
-    // 创建表结构
-    createTables(dbInstance)
-    saveDatabase()
-  }
-
-  console.log("数据库初始化成功")
-  return dbInstance
-}
-
-/**
- * 保存数据库到文件
- */
-export function saveDatabase(): void {
-  if (!dbInstance) return
-
-  const data = dbInstance.export()
-  const buffer = Buffer.from(data)
-  fs.writeFileSync(DB_PATH, buffer)
-}
-
-/**
- * 创建表结构
- */
-function createTables(db: Database): void {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS review_records (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      filename TEXT NOT NULL,
-      file_size INTEGER,
-      profession_types TEXT,
-      document_content TEXT,
-      review_result TEXT NOT NULL,
-      review_conclusion TEXT,
-      knowledge_file TEXT,
-      tokens_used INTEGER,
-      model TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  // 创建索引
-  db.run(`CREATE INDEX IF NOT EXISTS idx_created_at ON review_records(created_at)`)
-  db.run(`CREATE INDEX IF NOT EXISTS idx_profession_types ON review_records(profession_types)`)
-
-  console.log("数据库表创建成功")
-}
-
-/**
- * 数据库迁移：为旧表添加缺失的列
- */
-function migrateDatabase(db: Database): void {
-  try {
-    const columns = db.exec("PRAGMA table_info(review_records)")
-    const columnNames = columns[0]?.values.map((row) => row[1] as string) || []
-
-    if (!columnNames.includes("model")) {
-      db.run("ALTER TABLE review_records ADD COLUMN model TEXT")
-      console.log("数据库迁移: 添加 model 列")
-    }
-
-    saveDatabase()
-  } catch (e) {
-    console.error("数据库迁移失败:", e)
-  }
-}
-
-/**
- * 关闭数据库连接
- */
-export function closeDatabase(): void {
-  if (dbInstance) {
-    saveDatabase()
-    dbInstance.close()
-    dbInstance = null
-    console.log("数据库连接已关闭")
-  }
-}
+// Supabase 客户端
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+const supabase = createClient(supabaseUrl, supabaseKey)
 
 // 审核记录接口
 export interface ReviewRecord {
@@ -170,35 +37,31 @@ export interface CreateReviewInput {
  * 保存审核记录
  */
 export async function saveReviewRecord(input: CreateReviewInput): Promise<number> {
-  const db = await getDatabase()
-
-  // 先清理旧记录，避免刚插入的记录被误删
+  // 先清理旧记录
   await cleanupOldRecords()
 
-  db.run(
-    `INSERT INTO review_records
-     (filename, file_size, profession_types, document_content, review_result, review_conclusion, knowledge_file, tokens_used, model, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))`,
-    [
-      input.filename,
-      input.file_size || null,
-      input.profession_types ? JSON.stringify(input.profession_types) : null,
-      input.document_content || null,
-      input.review_result,
-      input.review_conclusion || null,
-      input.knowledge_file || null,
-      input.tokens_used || null,
-      input.model || null,
-    ]
-  )
+  const { data, error } = await supabase
+    .from("review_records")
+    .insert({
+      filename: input.filename,
+      file_size: input.file_size || null,
+      profession_types: input.profession_types ? JSON.stringify(input.profession_types) : null,
+      document_content: input.document_content || null,
+      review_result: input.review_result,
+      review_conclusion: input.review_conclusion || null,
+      knowledge_file: input.knowledge_file || null,
+      tokens_used: input.tokens_used || null,
+      model: input.model || null,
+    })
+    .select("id")
+    .single()
 
-  saveDatabase()
+  if (error) {
+    console.error("保存审核记录失败:", error)
+    throw new Error("保存审核记录失败: " + error.message)
+  }
 
-  // 获取最后插入的 ID - 使用更可靠的方式
-  const result = db.exec("SELECT MAX(id) FROM review_records")
-  const id = (result[0]?.values[0]?.[0] as number) || 0
-
-  return id
+  return data.id
 }
 
 /**
@@ -212,91 +75,74 @@ export async function getReviewRecords(
     keyword?: string
   }
 ): Promise<{ records: ReviewRecord[]; total: number }> {
-  // 强制从磁盘重新加载，确保获取最新数据
-  const db = await getDatabase(true)
   const offset = (page - 1) * pageSize
 
-  let whereClause = "1=1"
-  const params: (string | number)[] = []
+  // 构建查询
+  let query = supabase
+    .from("review_records")
+    .select("*", { count: "exact" })
 
   if (filters?.professionType) {
-    whereClause += " AND profession_types LIKE ?"
-    params.push(`%"${filters.professionType}"%`)
+    query = query.like("profession_types", `%"${filters.professionType}"%`)
   }
 
   if (filters?.keyword) {
-    whereClause += " AND filename LIKE ?"
-    params.push(`%${filters.keyword}%`)
+    query = query.like("filename", `%${filters.keyword}%`)
   }
 
-  // 获取总数
-  const countResult = db.exec(`SELECT COUNT(*) FROM review_records WHERE ${whereClause}`, params)
-  const total = (countResult[0]?.values[0]?.[0] as number) || 0
+  // 获取数据（带分页）
+  const { data, count, error } = await query
+    .order("created_at", { ascending: false })
+    .range(offset, offset + pageSize - 1)
 
-  // 获取记录
-  const recordsResult = db.exec(
-    `SELECT id, filename, file_size, profession_types, document_content, review_result,
-            review_conclusion, knowledge_file, tokens_used, model, created_at
-     FROM review_records
-     WHERE ${whereClause}
-     ORDER BY created_at DESC
-     LIMIT ? OFFSET ?`,
-    [...params, pageSize, offset]
-  )
-
-  const records: ReviewRecord[] = []
-  if (recordsResult[0]) {
-    for (const row of recordsResult[0].values) {
-      records.push({
-        id: row[0] as number,
-        filename: row[1] as string,
-        file_size: row[2] as number | null,
-        profession_types: row[3] as string | null,
-        document_content: row[4] as string | null,
-        review_result: row[5] as string,
-        review_conclusion: row[6] as string | null,
-        knowledge_file: row[7] as string | null,
-        tokens_used: row[8] as number | null,
-        model: row[9] as string | null,
-        created_at: row[10] as string,
-      })
-    }
+  if (error) {
+    console.error("获取审核记录失败:", error)
+    return { records: [], total: 0 }
   }
 
-  return { records, total }
+  const records: ReviewRecord[] = (data || []).map((row: Record<string, unknown>) => ({
+    id: row.id as number,
+    filename: row.filename as string,
+    file_size: row.file_size as number | null,
+    profession_types: row.profession_types as string | null,
+    document_content: row.document_content as string | null,
+    review_result: row.review_result as string,
+    review_conclusion: row.review_conclusion as string | null,
+    knowledge_file: row.knowledge_file as string | null,
+    tokens_used: row.tokens_used as number | null,
+    model: row.model as string | null,
+    created_at: row.created_at as string,
+  }))
+
+  return { records, total: count || 0 }
 }
 
 /**
  * 获取单条审核记录
  */
 export async function getReviewRecordById(id: number): Promise<ReviewRecord | null> {
-  const db = await getDatabase()
+  const { data, error } = await supabase
+    .from("review_records")
+    .select("*")
+    .eq("id", id)
+    .single()
 
-  const result = db.exec(
-    `SELECT id, filename, file_size, profession_types, document_content, review_result,
-            review_conclusion, knowledge_file, tokens_used, model, created_at
-     FROM review_records
-     WHERE id = ?`,
-    [id]
-  )
-
-  if (!result[0] || result[0].values.length === 0) {
+  if (error || !data) {
     return null
   }
 
-  const row = result[0].values[0]
   return {
-    id: row[0] as number,
-    filename: row[1] as string,
-    file_size: row[2] as number | null,
-    profession_types: row[3] as string | null,
-    document_content: row[4] as string | null,
-    review_result: row[5] as string,
-    review_conclusion: row[6] as string | null,
-    knowledge_file: row[7] as string | null,
-    tokens_used: row[8] as number | null,
-    model: row[9] as string | null,
-    created_at: row[10] as string,
+    id: data.id as number,
+    filename: data.filename as string,
+    file_size: data.file_size as number | null,
+    profession_types: data.profession_types as string | null,
+    document_content: data.document_content as string | null,
+    review_result: data.review_result as string,
+    review_conclusion: data.review_conclusion as string | null,
+    knowledge_file: data.knowledge_file as string | null,
+    tokens_used: data.tokens_used as number | null,
+    model: data.model as string | null,
+    created_at: data.created_at as string,
   }
 }
 
@@ -304,10 +150,15 @@ export async function getReviewRecordById(id: number): Promise<ReviewRecord | nu
  * 删除审核记录
  */
 export async function deleteReviewRecord(id: number): Promise<boolean> {
-  const db = await getDatabase()
+  const { error } = await supabase
+    .from("review_records")
+    .delete()
+    .eq("id", id)
 
-  db.run("DELETE FROM review_records WHERE id = ?", [id])
-  saveDatabase()
+  if (error) {
+    console.error("删除记录失败:", error)
+    return false
+  }
 
   return true
 }
@@ -316,30 +167,37 @@ export async function deleteReviewRecord(id: number): Promise<boolean> {
  * 清理旧记录（保留最新100条，删除30天前的记录）
  */
 export async function cleanupOldRecords(): Promise<void> {
-  const db = await getDatabase()
+  // 获取当前记录数
+  const { count } = await supabase
+    .from("review_records")
+    .select("*", { count: "exact", head: true })
 
-  // 先检查当前记录数
-  const countResult = db.exec("SELECT COUNT(*) FROM review_records")
-  const currentCount = (countResult[0]?.values[0]?.[0] as number) || 0
+  const currentCount = count || 0
 
-  // 如果记录数不超过100条，只删除30天前的记录
   if (currentCount <= 100) {
-    db.run(
-      "DELETE FROM review_records WHERE created_at < datetime('now', '-30 days', 'localtime')"
-    )
+    // 删除30天前的记录
+    const thirtyDaysAgo = new Date()
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+    await supabase
+      .from("review_records")
+      .delete()
+      .lt("created_at", thirtyDaysAgo.toISOString())
   } else {
-    // 如果记录数超过100条，只保留最新的100条
-    db.run(
-      `DELETE FROM review_records
-       WHERE id NOT IN (
-         SELECT id FROM review_records
-         ORDER BY created_at DESC
-         LIMIT 100
-       )`
-    )
-  }
+    // 只保留最新的100条：获取第100条的 id，删除比它旧的
+    const { data } = await supabase
+      .from("review_records")
+      .select("id")
+      .order("created_at", { ascending: false })
+      .range(99, 99)
 
-  saveDatabase()
+    if (data && data.length > 0) {
+      const thresholdId = data[0].id
+      await supabase
+        .from("review_records")
+        .delete()
+        .lt("id", thresholdId)
+    }
+  }
 }
 
 /**

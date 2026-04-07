@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from "next/server"
 import {
   getReviewRecords,
   deleteReviewRecord,
-  getDatabase,
-  saveDatabase,
 } from "@/lib/db"
 
 // 处理 CORS
