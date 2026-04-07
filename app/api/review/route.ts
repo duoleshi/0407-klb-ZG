@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import OpenAI from "openai"
 import { parseUploadedFile, ProgressCallback } from "@/lib/pdf-parser"
 import {
@@ -101,7 +101,10 @@ ${documentContent}
 
 - **【问题描述】** （填写具体问题）
 - **【方案对应内容】** （引用方案原文）
-- **【依据】** （引用相关规范条款原文）
+- **【依据】**
+  - 规范名称：（《XXXX规范》GB/JGJ XXXX-XXXX）
+  - 条款编号：（第X.X.X条）
+  - 条款原文："（必须完整复制审核依据中的原文，不得编造或修改）"
 - **【整改要求/建议】** （填写具体整改建议）
 
 **审核意见2：** ......
@@ -128,12 +131,15 @@ ${documentContent}
 
 - **【问题描述】** （填写具体问题）
 - **【方案对应内容】** （引用方案原文）
-- **【依据】** （引用相关规范条款原文）
+- **【依据】**
+  - 规范名称：（《XXXX规范》GB/JGJ XXXX-XXXX）
+  - 条款编号：（第X.X.X条）
+  - 条款原文："（必须完整复制审核依据中的原文，不得编造或修改）"
 - **【整改要求/建议】** （填写具体整改建议）
 
 **审核意见2：** ......
 
-**审核意见3：** ......
+**审核意见3：** ..。。
 
 ---
 
@@ -161,7 +167,7 @@ ${documentContent}
 2. 每条审核意见必须包含完整的四个要素：
    - 问题描述：清晰描述问题所在
    - 方案对应内容：准确引用方案原文
-   - 依据：准确引用知识库中的规范条款原文
+   - 依据：必须包含规范名称、条款编号、条款原文（三者缺一不可）
    - 整改要求/建议：具体可执行的整改建议
 
 3. 通用性审核按法律→法规→标准规范的顺序输出。
@@ -169,6 +175,13 @@ ${documentContent}
 4. 整改建议必须具体可执行，不得使用"建议完善"、"建议补充"等模糊表述。
 
 5. 语言风格：专业、客观、准确。
+
+6. 【禁止事项】以下行为严格禁止：
+   - 禁止编造知识库中不存在的规范文件名称或编号
+   - 禁止编造规范中不存在的条款号
+   - 禁止修改、增减条款原文内容（如原文是"75°"不得写成"75°±5°"）
+   - 禁止引用不提供条款原文的依据
+   - 如无法在知识库中找到确切依据，宁可不提该问题，也不得编造
 `
 }
 
@@ -449,6 +462,7 @@ function buildMergePrompt(
   professionNames: string,
   currentDate: string,
   chunkCount: string,
+  loadedFiles: string[],
   chunkReports: string
 ): string {
   return `# 任务
@@ -481,7 +495,10 @@ ${chunkReports}
 
 **危大工程判定：** 根据方案内容判断是否危大工程（危险性较大工程、超过一定规模的危险性较大工程、一般专项方案）。
 
-**审核依据：** 分块审核 ${chunkCount} 个块
+**审核依据：** 共加载 ${loadedFiles.length} 个规范文件，分别为：
+${loadedFiles.map((f, i) => `${i + 1}. ${f}`).join("\n")}
+
+分块审核共 ${chunkCount} 个块
 
 **审核时间：** ${currentDate}
 
@@ -495,7 +512,10 @@ ${chunkReports}
 
 - **【问题描述】** （填写具体问题）
 - **【方案对应内容】** （引用方案原文）
-- **【依据】** （引用相关规范条款原文）
+- **【依据】**
+  - 规范名称：（《XXXX规范》GB/JGJ XXXX-XXXX）
+  - 条款编号：（第X.X.X条）
+  - 条款原文："（必须完整复制审核依据中的原文，不得编造或修改）"
 - **【整改要求/建议】** （填写具体整改建议）
 
 **审核意见2：** ......
@@ -522,7 +542,10 @@ ${chunkReports}
 
 - **【问题描述】** （填写具体问题）
 - **【方案对应内容】** （引用方案原文）
-- **【依据】** （引用相关规范条款原文）
+- **【依据】**
+  - 规范名称：（《XXXX规范》GB/JGJ XXXX-XXXX）
+  - 条款编号：（第X.X.X条）
+  - 条款原文："（必须完整复制审核依据中的原文，不得编造或修改）"
 - **【整改要求/建议】** （填写具体整改建议）
 
 **审核意见2：** ......
@@ -538,6 +561,13 @@ ${chunkReports}
 总监理工程师      签字：                                日期：
 
 4. **语言风格**：专业、客观、准确。
+
+5. 【禁止事项】以下行为严格禁止：
+   - 禁止编造知识库中不存在的规范文件名称或编号
+   - 禁止编造规范中不存在的条款号
+   - 禁止修改、增减条款原文内容（如原文是"75°"不得写成"75°±5°"）
+   - 禁止引用不提供条款原文的依据
+   - 如无法在知识库中找到确切依据，宁可不提该问题，也不得编造
 `
 }
 
@@ -570,6 +600,7 @@ async function handleChunkedReview(
 
     // 3. 对每个块进行审核
     const chunkReports: string[] = []
+    const allLoadedFiles: string[] = []
     let totalTokens = 0
 
     for (let i = 0; i < chunks.length; i++) {
@@ -579,6 +610,13 @@ async function handleChunkedReview(
       // 3.1 提取该块相关的精简知识库
       const { contextContent: simplifiedContext, loadedFiles } =
         await extractSimplifiedKnowledgeContext(chunk.content, professionTypes)
+
+      // 收集所有加载的知识库文件（去重）
+      for (const f of loadedFiles) {
+        if (!allLoadedFiles.includes(f)) {
+          allLoadedFiles.push(f)
+        }
+      }
 
       // 3.2 构建提示词
       const prompt = CHUNK_REVIEW_PROMPT_TEMPLATE
@@ -616,6 +654,7 @@ async function handleChunkedReview(
       professionNames,
       currentDate,
       chunks.length.toString(),
+      allLoadedFiles,
       chunkReports.join("\n\n---\n\n")
     )
 
@@ -716,6 +755,7 @@ async function handleChunkedReviewSSE(
 
     // 3. 对每个块进行审核
     const chunkReports: string[] = []
+    const allLoadedFiles: string[] = []
     let totalTokens = 0
 
     for (let i = 0; i < chunks.length; i++) {
@@ -733,8 +773,15 @@ async function handleChunkedReviewSSE(
       console.log(`\n--- 审核块 ${i + 1}/${chunks.length}: "${chunk.chapterTitle}" (${chunk.charCount} 字符) ---`)
 
       // 提取该块相关的精简知识库
-      const { contextContent: simplifiedContext } =
+      const { contextContent: simplifiedContext, loadedFiles: chunkLoadedFiles } =
         await extractSimplifiedKnowledgeContext(chunk.content, professionTypes)
+
+      // 收集所有加载的知识库文件（去重）
+      for (const f of chunkLoadedFiles) {
+        if (!allLoadedFiles.includes(f)) {
+          allLoadedFiles.push(f)
+        }
+      }
 
       // 构建提示词
       const prompt = CHUNK_REVIEW_PROMPT_TEMPLATE
@@ -774,6 +821,7 @@ async function handleChunkedReviewSSE(
       professionNames,
       currentDate,
       chunks.length.toString(),
+      allLoadedFiles,
       chunkReports.join("\n\n---\n\n")
     )
 

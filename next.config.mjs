@@ -7,8 +7,12 @@ const nextConfig = {
     unoptimized: true,
   },
   serverExternalPackages: ["pdf-parse", "sql.js"],
-  // 添加空的 turbopack 配置以消除警告
-  turbopack: {},
+  // 配置 Turbopack 忽略 sql.js 的 WASM 文件
+  turbopack: {
+    resolveAlias: {
+      'sql.js': 'sql.js',
+    },
+  },
 }
 
 export default nextConfig
