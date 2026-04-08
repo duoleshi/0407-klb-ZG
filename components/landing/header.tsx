@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
-import { History, ArrowUp, LogOut, User } from "lucide-react"
+import { History, ArrowUp, LogOut, LogIn, User } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { createClient } from "@/lib/supabase/client"
@@ -17,31 +17,29 @@ const navLinks = [
 
 export function Header() {
   const router = useRouter()
-  const [userEmail, setUserEmail] = useState<string | null>(null)
+  const [userPhone, setUserPhone] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const getUser = async () => {
-      try {
-        const supabase = createClient()
-        const { data: { user } } = await supabase.auth.getUser()
-        if (user?.email) {
-          // 从 email 中提取手机号（格式：手机号@users.app）
-          setUserEmail(user.email.replace("@users.app", ""))
-        }
-      } catch {
-        // 未登录
-      } finally {
-        setLoading(false)
+    const supabase = createClient()
+
+    // 通过 onAuthStateChange 同时处理初始加载和后续变化
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user?.email) {
+        setUserPhone(session.user.email.replace("@users.app", ""))
+      } else {
+        setUserPhone(null)
       }
-    }
-    getUser()
+      setLoading(false)
+    })
+
+    return () => subscription.unsubscribe()
   }, [])
 
   const handleLogout = async () => {
     const supabase = createClient()
     await supabase.auth.signOut()
-    router.push("/login")
+    setUserPhone(null)
     router.refresh()
   }
 
@@ -86,11 +84,11 @@ export function Header() {
           </Link>
           <ThemeToggle />
 
-          {!loading && userEmail && (
+          {!loading && userPhone ? (
             <div className="flex items-center gap-2">
               <span className="hidden items-center gap-1 text-sm text-muted-foreground sm:flex">
                 <User className="h-3.5 w-3.5" />
-                {userEmail}
+                {userPhone}
               </span>
               <Button
                 variant="ghost"
@@ -102,7 +100,14 @@ export function Header() {
                 <span className="hidden sm:inline">退出</span>
               </Button>
             </div>
-          )}
+          ) : !loading ? (
+            <Link href="/login">
+              <Button variant="outline" size="sm" className="gap-1.5">
+                <LogIn className="h-4 w-4" />
+                <span className="hidden sm:inline">登录</span>
+              </Button>
+            </Link>
+          ) : null}
 
           <a href="/#upload">
             <Button size="sm" className="gap-1.5">

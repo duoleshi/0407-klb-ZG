@@ -34,22 +34,34 @@ export default function RegisterPage() {
     setLoading(true)
 
     try {
+      // 服务端注册（绕过邮箱验证）
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, password }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setError(data.error || "注册失败")
+        return
+      }
+
+      // 注册成功，用客户端登录
       const supabase = createClient()
-      const { error } = await supabase.auth.signUp({
+      const { error: loginError } = await supabase.auth.signInWithPassword({
         email: `${phone}@users.app`,
         password,
       })
 
-      if (error) {
-        if (error.message.includes("already registered")) {
-          setError("该手机号已注册")
-        } else {
-          setError("注册失败: " + error.message)
-        }
+      if (loginError) {
+        // 注册成功但自动登录失败，跳转到登录页
+        router.push("/login")
         return
       }
 
-      // 注册成功，自动登录，跳转首页
+      await supabase.auth.getSession()
       router.push("/")
       router.refresh()
     } catch {
@@ -129,6 +141,12 @@ export default function RegisterPage() {
                 登录
               </Link>
             </p>
+
+            <div className="border-t pt-4 text-center">
+              <Link href="/" className="text-sm text-muted-foreground hover:text-primary">
+                返回首页
+              </Link>
+            </div>
           </form>
         </CardContent>
       </Card>

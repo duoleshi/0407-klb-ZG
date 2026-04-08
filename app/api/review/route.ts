@@ -13,6 +13,7 @@ import {
 } from "@/lib/knowledge-base"
 import {
   saveReviewRecord,
+  saveReviewRecordToSqlite,
   extractConclusion,
 } from "@/lib/db"
 import { getCurrentUserId } from "@/lib/supabase/server"
@@ -220,13 +221,10 @@ export async function OPTIONS() {
 }
 
 export async function POST(request: NextRequest) {
-  // 获取当前用户
+  // 获取当前用户（可选，未登录也能审核）
   const userId = await getCurrentUserId()
-  if (!userId) {
-    return NextResponse.json({ error: "请先登录" }, { status: 401 })
-  }
 
-  console.log("=== 开始审核请求 ===")
+  console.log("=== 开始审核请求 ===", userId ? `(用户: ${userId.slice(0, 8)}...)` : "(游客模式)")
   console.log("环境检查:", {
     nodeEnv: process.env.NODE_ENV,
     hasApiKey: !!process.env.DEEPSEEK_API_KEY,
@@ -326,7 +324,7 @@ export async function POST(request: NextRequest) {
 
         if (chunkCheck.needsChunking) {
           // 分块审核流程
-          await handleChunkedReviewSSE(file, documentContent, client, modelName, sendProgress, sendResult, sendError, close)
+          await handleChunkedReviewSSE(file, documentContent, client, modelName, userId, sendProgress, sendResult, sendError, close)
           return
         }
 
@@ -399,7 +397,7 @@ export async function POST(request: NextRequest) {
         const reviewConclusion = extractConclusion(reviewResult)
 
         try {
-          await saveReviewRecord({
+          const recordData = {
             filename: file.name,
             file_size: file.size,
             profession_types: professionTypes.length > 0 ? professionTypes.map(p => p.name) : [professionNames],
@@ -409,8 +407,18 @@ export async function POST(request: NextRequest) {
             knowledge_file: `共加载 ${loadedFiles.length} 个规范文件`,
             tokens_used: completion.usage?.total_tokens,
             model: modelName,
-            userId,
-          })
+          }
+
+          if (userId) {
+            // 已登录用户：保存到 Supabase
+            await saveReviewRecord({
+              ...recordData,
+              userId,
+            })
+          } else {
+            // 未登录用户：保存到 Sqlite
+            await saveReviewRecordToSqlite(recordData)
+          }
         } catch (dbError) {
           console.error("保存审核记录失败:", dbError)
         }
@@ -718,18 +726,20 @@ async function handleChunkedReview(
 
     // 6. 保存审核记录
     try {
-      await saveReviewRecord({
-        filename: file.name,
-        file_size: file.size,
-        profession_types: professionTypes.map(p => p.name),
-        document_content: documentContent.slice(0, 10000),
-        review_result: finalResult,
-        review_conclusion: reviewConclusion,
-        knowledge_file: `分块审核 ${chunks.length} 个块`,
-        tokens_used: totalTokens,
-        userId,
-      })
-      console.log("审核记录已保存")
+      if (userId) {
+        await saveReviewRecord({
+          filename: file.name,
+          file_size: file.size,
+          profession_types: professionTypes.map(p => p.name),
+          document_content: documentContent.slice(0, 10000),
+          review_result: finalResult,
+          review_conclusion: reviewConclusion,
+          knowledge_file: `分块审核 ${chunks.length} 个块`,
+          tokens_used: totalTokens,
+          userId,
+        })
+        console.log("审核记录已保存")
+      }
     } catch (dbError) {
       console.error("保存审核记录失败:", dbError)
     }
@@ -765,6 +775,7 @@ async function handleChunkedReviewSSE(
   documentContent: string,
   client: OpenAI,
   modelName: string,
+  userId: string | null,
   sendProgress: (event: ProgressEvent) => void,
   sendResult: (data: any) => void,
   sendError: (error: string) => void,
@@ -892,7 +903,7 @@ async function handleChunkedReviewSSE(
 
     // 6. 保存审核记录
     try {
-      await saveReviewRecord({
+      const recordData = {
         filename: file.name,
         file_size: file.size,
         profession_types: professionTypes.map(p => p.name),
@@ -902,8 +913,18 @@ async function handleChunkedReviewSSE(
         knowledge_file: `分块审核 ${chunks.length} 个块`,
         tokens_used: totalTokens,
         model: modelName,
-        userId,
-      })
+      }
+
+      if (userId) {
+        // 已登录用户：保存到 Supabase
+        await saveReviewRecord({
+          ...recordData,
+          userId,
+        })
+      } else {
+        // 未登录用户：保存到 Sqlite
+        await saveReviewRecordToSqlite(recordData)
+      }
       console.log("审核记录已保存")
     } catch (dbError) {
       console.error("保存审核记录失败:", dbError)

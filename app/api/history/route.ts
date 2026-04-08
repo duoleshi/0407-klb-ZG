@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import {
   getReviewRecords,
   deleteReviewRecord,
+  getReviewRecordsFromSqlite,
+  deleteReviewRecordFromSqlite,
 } from "@/lib/db"
 import { getCurrentUserId } from "@/lib/supabase/server"
 
@@ -21,10 +23,6 @@ export async function OPTIONS() {
 export async function GET(request: NextRequest) {
   try {
     const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: "请先登录" }, { status: 401 })
-    }
-
     const { searchParams } = new URL(request.url)
 
     const page = parseInt(searchParams.get("page") || "1", 10)
@@ -32,10 +30,25 @@ export async function GET(request: NextRequest) {
     const professionType = searchParams.get("professionType") || undefined
     const keyword = searchParams.get("keyword") || undefined
 
-    const { records, total } = await getReviewRecords(userId, page, pageSize, {
-      professionType,
-      keyword,
-    })
+    let records, total
+
+    if (userId) {
+      // 已登录用户：从 Supabase 获取
+      const result = await getReviewRecords(userId, page, pageSize, {
+        professionType,
+        keyword,
+      })
+      records = result.records
+      total = result.total
+    } else {
+      // 未登录用户：从 Sqlite 获取
+      const result = await getReviewRecordsFromSqlite(page, pageSize, {
+        professionType,
+        keyword,
+      })
+      records = result.records
+      total = result.total
+    }
 
     // 计算总页数
     const totalPages = Math.ceil(total / pageSize)
@@ -65,10 +78,6 @@ export async function GET(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: "请先登录" }, { status: 401 })
-    }
-
     const { searchParams } = new URL(request.url)
     const id = parseInt(searchParams.get("id") || "0", 10)
 
@@ -79,7 +88,13 @@ export async function DELETE(request: NextRequest) {
       )
     }
 
-    await deleteReviewRecord(id, userId)
+    if (userId) {
+      // 已登录用户：从 Supabase 删除
+      await deleteReviewRecord(id, userId)
+    } else {
+      // 未登录用户：从 Sqlite 删除
+      await deleteReviewRecordFromSqlite(id)
+    }
 
     return NextResponse.json({
       success: true,

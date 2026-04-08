@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getReviewRecordById } from "@/lib/db"
+import { getReviewRecordById, getReviewRecordByIdFromSqlite } from "@/lib/db"
 import { getCurrentUserId } from "@/lib/supabase/server"
 
 // 处理 CORS
@@ -21,10 +21,6 @@ export async function GET(
 ) {
   try {
     const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: "请先登录" }, { status: 401 })
-    }
-
     const { id } = await params
     const recordId = parseInt(id, 10)
 
@@ -35,7 +31,15 @@ export async function GET(
       )
     }
 
-    const record = await getReviewRecordById(recordId, userId)
+    let record
+
+    if (userId) {
+      // 已登录用户：从 Supabase 获取
+      record = await getReviewRecordById(recordId, userId)
+    } else {
+      // 未登录用户：从 Sqlite 获取
+      record = await getReviewRecordByIdFromSqlite(recordId)
+    }
 
     if (!record) {
       return NextResponse.json(

@@ -2,8 +2,8 @@ import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { createServerClient } from "@supabase/ssr"
 
-// 不需要登录就能访问的页面
-const publicPaths = ["/login", "/register"]
+// 需要登录才能访问的页面
+const protectedPaths = ["/history"]
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -51,13 +51,11 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  // 已登录用户访问登录/注册页，重定向到首页
-  if (user && publicPaths.includes(pathname)) {
-    return NextResponse.redirect(new URL("/", request.url))
-  }
+  // 检查是否是受保护的路径
+  const isProtectedPath = protectedPaths.some((path) => pathname.startsWith(path))
 
   // 未登录用户访问受保护页面，重定向到登录页
-  if (!user && !publicPaths.includes(pathname)) {
+  if (!user && isProtectedPath) {
     return NextResponse.redirect(new URL("/login", request.url))
   }
 

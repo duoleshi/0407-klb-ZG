@@ -17,7 +17,7 @@ const stats = [
   },
   {
     icon: CheckCircle,
-    value: "95%",
+    value: "70%",
     label: "准确率",
     description: "基于专业知识库审核",
   },

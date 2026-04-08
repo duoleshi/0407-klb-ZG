@@ -78,6 +78,7 @@ function ProgressDisplay({
 
 export function Hero() {
   const [file, setFile] = useState<File | null>(null)
+  const [selectedProfession, setSelectedProfession] = useState<string>("")
   const [selectedModel, setSelectedModel] = useState<string>("deepseek")
   const [status, setStatus] = useState<ReviewStatus>("idle")
   const [result, setResult] = useState<string>("")
@@ -211,6 +212,23 @@ export function Hero() {
                 上传方案文件
               </label>
               <FileUpload file={file} onFileChange={setFile} />
+            </div>
+
+            {/* Profession Select */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">
+                选择专业领域
+              </label>
+              <Select value={selectedProfession} onValueChange={setSelectedProfession}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="请选择专业领域..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="房屋建筑工程">房屋建筑工程</SelectItem>
+                  <SelectItem value="市政工程">市政工程</SelectItem>
+                  <SelectItem value="水利水务工程">水利水务工程</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Model Select */}

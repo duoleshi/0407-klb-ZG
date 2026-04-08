@@ -33,6 +33,8 @@ export default function LoginPage() {
         return
       }
 
+      // 确保 session 建立后再跳转
+      await supabase.auth.getSession()
       router.push("/")
       router.refresh()
     } catch {
@@ -97,6 +99,12 @@ export default function LoginPage() {
                 注册
               </Link>
             </p>
+
+            <div className="border-t pt-4 text-center">
+              <Link href="/" className="text-sm text-muted-foreground hover:text-primary">
+                返回首页
+              </Link>
+            </div>
           </form>
         </CardContent>
       </Card>
